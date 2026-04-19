@@ -94,6 +94,49 @@ def _save_ref_audio(ref_audio_b64: str) -> str:
     return path
 
 
+_whisper = None
+
+def _get_whisper():
+    global _whisper
+    if _whisper is None:
+        from faster_whisper import WhisperModel
+        print("[Qwen-TTS] Loading whisper base...", flush=True)
+        _whisper = WhisperModel("base", device="cpu", compute_type="int8")
+    return _whisper
+
+
+def _trim_tail_by_whisper(audio: np.ndarray, sr: int, body_chars: str, keep_after_s: float = 0.8) -> np.ndarray:
+    """패딩 포함한 audio에서 본문 마지막 단어 + keep_after_s까지만 남김.
+    body_chars: 원본 텍스트의 한글만 모은 문자열."""
+    import re, tempfile
+    try:
+        wm = _get_whisper()
+        tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        sf.write(tmp.name, audio, sr)
+        segs, _ = wm.transcribe(tmp.name, language="ko", word_timestamps=True)
+        words = []
+        for seg in segs:
+            if seg.words:
+                words.extend(seg.words)
+        if not words:
+            return audio
+        # 본문 마지막 단어 위치 (glove pattern: whisper 단어가 body_chars에 포함되는 마지막 index)
+        last_idx = -1
+        for i, w in enumerate(words):
+            wc = re.sub(r'[^가-힣]', '', w.word)
+            if not wc:
+                continue
+            if wc in body_chars or any(wc[:k] in body_chars for k in range(len(wc), 1, -1)):
+                last_idx = i
+        if last_idx >= 0:
+            cut_time = min(words[last_idx].end + keep_after_s, len(audio) / sr)
+            print(f"[Qwen-TTS] tail trim: last_word='{words[last_idx].word.strip()}' end={words[last_idx].end:.2f}s cut={cut_time:.2f}s", flush=True)
+            return audio[:int(sr * cut_time)]
+    except Exception as e:
+        print(f"[Qwen-TTS] whisper trim err: {e}", flush=True)
+    return audio
+
+
 def _noise_gate_front(audio: np.ndarray, sr: int, duration_s: float = 0.4,
                        threshold: float = 0.035, win_ms: int = 10,
                        attenuation: float = 0.05) -> np.ndarray:
@@ -172,9 +215,17 @@ def handler(event):
 
         model = _load_model()
 
+        # 텍스트에 꼬리 패딩 추가 — 마지막 음절 잘림 방지. whisper로 본문 끝에서 잘라냄.
+        import re as _re
+        body_chars = _re.sub(r'[^가-힣]', '', text)
+        text_padded = text
+        if text_padded and text_padded[-1] not in '.!?':
+            text_padded += '.'
+        text_padded = text_padded + ' 그럼 다음에 또 봬요.'
+
         t0 = time.time()
         wavs, sr = model.generate_voice_clone(
-            text=text,
+            text=text_padded,
             language=language,
             ref_audio=audio_tuple,
             ref_text=ref_text,
@@ -183,7 +234,8 @@ def handler(event):
         )
         audio = wavs[0]
         gen_s = time.time() - t0
-        # 후처리: 생성 앞 0.4s 저에너지 노이즈 감쇠
+        # 후처리 순서: 꼬리 trim (본문 끝 + 0.8s) → 앞 노이즈 게이트
+        audio = _trim_tail_by_whisper(audio, sr, body_chars)
         audio = _noise_gate_front(audio, sr)
         duration = len(audio) / sr
         print(f"[Qwen-TTS] {len(text)} chars → {duration:.2f}s audio in {gen_s:.1f}s", flush=True)

@@ -14,3 +14,5 @@ onnxruntime
 huggingface_hub
 hf_transfer
 runpod>=1.7.0
+faster-whisper
+ctranslate2
