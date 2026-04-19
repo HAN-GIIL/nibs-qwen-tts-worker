@@ -68,14 +68,45 @@ def _load_model():
 
 
 def _save_ref_audio(ref_audio_b64: str) -> str:
-    """base64 wav → /tmp/ref_{hash}.wav (캐시용으로 해시 기반)"""
+    """base64 wav → /tmp/ref_{hash}.wav + 0.5s trailing silence (decoder 전이 garble 방지)"""
     data = base64.b64decode(ref_audio_b64)
     h = hashlib.md5(data).hexdigest()[:16]
-    path = f"/tmp/ref_{h}.wav"
-    if not os.path.exists(path):
-        with open(path, "wb") as f:
-            f.write(data)
-    return path
+    padded_path = f"/tmp/ref_{h}_padded.wav"
+    if os.path.exists(padded_path):
+        return padded_path
+    # 원본 디코드
+    orig_path = f"/tmp/ref_{h}_orig.wav"
+    with open(orig_path, "wb") as f:
+        f.write(data)
+    ref_data, ref_sr = sf.read(orig_path)
+    if ref_data.ndim > 1:
+        ref_data = ref_data.mean(axis=1)
+    silence = np.zeros(int(ref_sr * 0.5), dtype=ref_data.dtype)
+    sf.write(padded_path, np.concatenate([ref_data, silence]), ref_sr)
+    return padded_path
+
+
+def _noise_gate_front(audio: np.ndarray, sr: int, duration_s: float = 0.4,
+                       threshold: float = 0.035, win_ms: int = 10,
+                       attenuation: float = 0.05) -> np.ndarray:
+    """첫 duration_s 구간에 저에너지 wideband 노이즈 감쇠. speech(RMS≫threshold)는 그대로."""
+    end = min(int(sr * duration_s), len(audio))
+    win = int(sr * win_ms / 1000)
+    if end < win * 2:
+        return audio
+    result = audio.astype(np.float32, copy=True)
+    n_win = end // win
+    gains = np.ones(n_win + 2, dtype=np.float32)
+    for k in range(n_win):
+        seg = audio[k*win:(k+1)*win]
+        rms = float(np.sqrt(np.mean(seg.astype(np.float64)**2)))
+        gains[k] = attenuation if rms < threshold else 1.0
+    gains[-2] = 1.0
+    gains[-1] = 1.0
+    gain_env = np.interp(np.arange(end),
+                         np.arange(n_win + 2) * win + win // 2, gains)
+    result[:end] *= gain_env
+    return result
 
 
 def _encode_mp3(audio: np.ndarray, sr: int) -> str:
@@ -122,6 +153,8 @@ def handler(event):
         )
         audio = wavs[0]
         gen_s = time.time() - t0
+        # 후처리: 생성 앞 0.4s 저에너지 노이즈 감쇠 (decoder warmup "솨악" 제거)
+        audio = _noise_gate_front(audio, sr)
         duration = len(audio) / sr
         print(f"[Qwen-TTS] {len(text)} chars → {duration:.2f}s audio in {gen_s:.1f}s", flush=True)
 
