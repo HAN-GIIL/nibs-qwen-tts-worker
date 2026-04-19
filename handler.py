@@ -94,6 +94,28 @@ def _save_ref_audio(ref_audio_b64: str) -> str:
     return path
 
 
+def _noise_gate_front(audio: np.ndarray, sr: int, duration_s: float = 0.4,
+                       threshold: float = 0.035, win_ms: int = 10,
+                       attenuation: float = 0.05) -> np.ndarray:
+    """앞 duration_s 구간의 저에너지 wideband 노이즈(솨악) 감쇠."""
+    end = min(int(sr * duration_s), len(audio))
+    win = int(sr * win_ms / 1000)
+    if end < win * 2:
+        return audio
+    result = audio.astype(np.float32, copy=True)
+    n_win = end // win
+    gains = np.ones(n_win + 2, dtype=np.float32)
+    for k in range(n_win):
+        seg = audio[k*win:(k+1)*win]
+        rms = float(np.sqrt(np.mean(seg.astype(np.float64)**2)))
+        gains[k] = attenuation if rms < threshold else 1.0
+    gains[-2] = 1.0; gains[-1] = 1.0
+    gain_env = np.interp(np.arange(end),
+                         np.arange(n_win + 2) * win + win // 2, gains)
+    result[:end] *= gain_env
+    return result
+
+
 def _encode_mp3(audio: np.ndarray, sr: int) -> str:
     wav_buf = io.BytesIO()
     sf.write(wav_buf, audio, sr, format="WAV")
@@ -142,6 +164,9 @@ def handler(event):
             import librosa as _lr
             wav = _lr.resample(wav, orig_sr=int(ref_sr), target_sr=TARGET_SR).astype(np.float32)
             ref_sr = TARGET_SR
+        # ref 끝에 0.5s 묵음 패딩 — decoder 전이 garble이 본문 밖(묵음 위)에서 일어나게
+        silence = np.zeros(int(ref_sr * 0.5), dtype=np.float32)
+        wav = np.concatenate([wav, silence])
         audio_tuple = (wav, int(ref_sr))
         print(f"[Qwen-TTS] ref wav: shape={wav.shape}, sr={ref_sr}", flush=True)
 
@@ -158,6 +183,8 @@ def handler(event):
         )
         audio = wavs[0]
         gen_s = time.time() - t0
+        # 후처리: 생성 앞 0.4s 저에너지 노이즈 감쇠
+        audio = _noise_gate_front(audio, sr)
         duration = len(audio) / sr
         print(f"[Qwen-TTS] {len(text)} chars → {duration:.2f}s audio in {gen_s:.1f}s", flush=True)
 
