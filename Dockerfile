@@ -13,9 +13,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt hf_transfer
 
-# Pre-download model at build time → 런타임 콜드스타트 단축
-RUN python -c "from huggingface_hub import snapshot_download; \
-    snapshot_download('Qwen/Qwen3-TTS-12Hz-1.7B-Base', local_dir='/models/Qwen3-TTS-12Hz-1.7B-Base')"
+# 모델은 빌드 타임에 굽지 않음 (GHA 디스크 한계) → 첫 콜드스타트 때 handler가 자동 다운로드
+# RunPod Network Volume을 마운트해두면 워커 재시작 시에도 캐시 공유됨
 
 COPY handler.py /app/handler.py
 

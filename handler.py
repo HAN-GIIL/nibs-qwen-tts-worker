@@ -22,14 +22,29 @@ import torch
 import runpod
 
 MODEL_PATH = os.environ.get("MODEL_PATH", "/models/Qwen3-TTS-12Hz-1.7B-Base")
+MODEL_REPO = os.environ.get("MODEL_REPO", "Qwen/Qwen3-TTS-12Hz-1.7B-Base")
 
 _model = None
+
+
+def _ensure_model_downloaded():
+    """MODEL_PATH 없으면 HF에서 다운로드."""
+    import os
+    cfg = os.path.join(MODEL_PATH, "config.json")
+    if os.path.exists(cfg):
+        return
+    print(f"[Qwen-TTS] Downloading {MODEL_REPO} → {MODEL_PATH}...", flush=True)
+    t0 = time.time()
+    from huggingface_hub import snapshot_download
+    snapshot_download(MODEL_REPO, local_dir=MODEL_PATH)
+    print(f"[Qwen-TTS] Download done in {time.time()-t0:.1f}s", flush=True)
 
 
 def _load_model():
     global _model
     if _model is not None:
         return _model
+    _ensure_model_downloaded()
     print(f"[Qwen-TTS] Loading {MODEL_PATH} (cuda + bf16 + flash-attn3)...", flush=True)
     t0 = time.time()
     from qwen_tts import Qwen3TTSModel
