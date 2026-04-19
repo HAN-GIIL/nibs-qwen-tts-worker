@@ -28,7 +28,9 @@ except Exception as e:
     traceback.print_exc()
     sys.exit(1)
 
-MODEL_PATH = os.environ.get("MODEL_PATH", "/models/Qwen3-TTS-12Hz-1.7B-Base")
+# Network Volume은 /runpod-volume에 마운트됨. 볼륨 있으면 거기 저장 → 콜드스타트마다 재다운로드 생략
+_VOLUME_BASE = "/runpod-volume/models" if os.path.isdir("/runpod-volume") else "/models"
+MODEL_PATH = os.environ.get("MODEL_PATH", f"{_VOLUME_BASE}/Qwen3-TTS-12Hz-1.7B-Base")
 MODEL_REPO = os.environ.get("MODEL_REPO", "Qwen/Qwen3-TTS-12Hz-1.7B-Base")
 
 _model = None
