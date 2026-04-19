@@ -246,34 +246,20 @@ def handler(event):
         if text_padded and text_padded[-1] not in '.!?':
             text_padded += '.'
 
-        # Stochastic 생성이라 "가장" 등이 누락될 때 있음 → 최대 3회 retry, whisper 점수 최고 선택
-        best_audio = None
-        best_score = -1.0
-        best_txt = ""
-        best_missing = set()
+        # 단일 생성 (retry는 voice drift 유발해서 off). Content 실패시 클라이언트가 재요청.
         t0 = time.time()
-        for attempt in range(3):
-            wavs, sr = model.generate_voice_clone(
-                text=text_padded,
-                language=language,
-                ref_audio=audio_tuple,
-                ref_text=ref_text,
-                x_vector_only_mode=False,
-                max_new_tokens=2048,
-            )
-            cand = wavs[0]
-            cand = _trim_tail_by_whisper(cand, sr, body_chars)
-            cand = _noise_gate_front(cand, sr)
-            txt = _transcribe(cand, sr)
-            s, missing = _score_transcription(txt, text)
-            print(f"[Qwen-TTS] attempt {attempt+1}: score={s:.2f} missing={missing} txt={txt}", flush=True)
-            if s > best_score:
-                best_audio, best_score, best_txt, best_missing = cand, s, txt, missing
-            if s >= 1.0:
-                break
-        audio = best_audio
+        wavs, sr = model.generate_voice_clone(
+            text=text_padded,
+            language=language,
+            ref_audio=audio_tuple,
+            ref_text=ref_text,
+            x_vector_only_mode=False,
+            max_new_tokens=2048,
+        )
+        audio = wavs[0]
+        audio = _trim_tail_by_whisper(audio, sr, body_chars)
+        audio = _noise_gate_front(audio, sr)
         gen_s = time.time() - t0
-        print(f"[Qwen-TTS] final score={best_score:.2f} missing={best_missing} txt={best_txt}", flush=True)
         duration = len(audio) / sr
         print(f"[Qwen-TTS] {len(text)} chars → {duration:.2f}s audio in {gen_s:.1f}s", flush=True)
 
