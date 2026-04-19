@@ -105,6 +105,30 @@ def _get_whisper():
     return _whisper
 
 
+def _transcribe(audio: np.ndarray, sr: int) -> str:
+    """whisper로 audio 전사 (평가용)."""
+    import tempfile
+    try:
+        wm = _get_whisper()
+        tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        sf.write(tmp.name, audio, sr)
+        segs, _ = wm.transcribe(tmp.name, language="ko")
+        return " ".join(s.text.strip() for s in segs)
+    except Exception as e:
+        print(f"[Qwen-TTS] transcribe err: {e}", flush=True)
+        return ""
+
+
+def _score_transcription(txt: str, target_text: str) -> tuple[float, set]:
+    import re
+    tgt = set(w for w in re.sub(r"[^가-힣\s]", " ", target_text).split() if w)
+    got = set(w for w in re.sub(r"[^가-힣\s]", " ", txt).split() if w)
+    if not tgt:
+        return 1.0, set()
+    matched = set(w for w in tgt if any(w in g or g in w for g in got))
+    return len(matched) / len(tgt), tgt - matched
+
+
 def _trim_tail_by_whisper(audio: np.ndarray, sr: int, body_chars: str, keep_after_s: float = 0.8) -> np.ndarray:
     """패딩 포함한 audio에서 본문 마지막 단어 + keep_after_s까지만 남김.
     body_chars: 원본 텍스트의 한글만 모은 문자열."""
@@ -223,20 +247,34 @@ def handler(event):
             text_padded += '.'
         text_padded = text_padded + ' 그럼 다음에 또 봬요.'
 
+        # Stochastic 생성이라 "가장" 등이 누락될 때 있음 → 최대 3회 retry, whisper 점수 최고 선택
+        best_audio = None
+        best_score = -1.0
+        best_txt = ""
+        best_missing = set()
         t0 = time.time()
-        wavs, sr = model.generate_voice_clone(
-            text=text_padded,
-            language=language,
-            ref_audio=audio_tuple,
-            ref_text=ref_text,
-            x_vector_only_mode=False,
-            max_new_tokens=2048,
-        )
-        audio = wavs[0]
+        for attempt in range(3):
+            wavs, sr = model.generate_voice_clone(
+                text=text_padded,
+                language=language,
+                ref_audio=audio_tuple,
+                ref_text=ref_text,
+                x_vector_only_mode=False,
+                max_new_tokens=2048,
+            )
+            cand = wavs[0]
+            cand = _trim_tail_by_whisper(cand, sr, body_chars)
+            cand = _noise_gate_front(cand, sr)
+            txt = _transcribe(cand, sr)
+            s, missing = _score_transcription(txt, text)
+            print(f"[Qwen-TTS] attempt {attempt+1}: score={s:.2f} missing={missing} txt={txt}", flush=True)
+            if s > best_score:
+                best_audio, best_score, best_txt, best_missing = cand, s, txt, missing
+            if s >= 1.0:
+                break
+        audio = best_audio
         gen_s = time.time() - t0
-        # 후처리 순서: 꼬리 trim (본문 끝 + 0.8s) → 앞 노이즈 게이트
-        audio = _trim_tail_by_whisper(audio, sr, body_chars)
-        audio = _noise_gate_front(audio, sr)
+        print(f"[Qwen-TTS] final score={best_score:.2f} missing={best_missing} txt={best_txt}", flush=True)
         duration = len(audio) / sr
         print(f"[Qwen-TTS] {len(text)} chars → {duration:.2f}s audio in {gen_s:.1f}s", flush=True)
 
