@@ -1,0 +1,16 @@
+torch==2.8.0
+transformers==4.57.3
+accelerate==1.12.0
+einops
+librosa
+torchaudio
+soundfile
+sox
+onnxruntime
+kernels
+numpy<2
+scipy
+pydub
+runpod>=1.7.0
+huggingface_hub
+qwen_tts
