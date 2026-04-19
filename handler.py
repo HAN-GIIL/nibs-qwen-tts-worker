@@ -15,11 +15,18 @@ Output:
         "duration": float,
     }
 """
-import os, io, base64, hashlib, time
-import numpy as np
-import soundfile as sf
-import torch
-import runpod
+print("[Qwen-TTS] handler.py module loading...", flush=True)
+import os, io, base64, hashlib, time, sys, traceback
+try:
+    import numpy as np
+    import soundfile as sf
+    import torch
+    import runpod
+    print(f"[Qwen-TTS] imports OK. torch={torch.__version__} cuda_avail={torch.cuda.is_available()}", flush=True)
+except Exception as e:
+    print(f"[Qwen-TTS] FATAL import error: {e}", flush=True)
+    traceback.print_exc()
+    sys.exit(1)
 
 MODEL_PATH = os.environ.get("MODEL_PATH", "/models/Qwen3-TTS-12Hz-1.7B-Base")
 MODEL_REPO = os.environ.get("MODEL_REPO", "Qwen/Qwen3-TTS-12Hz-1.7B-Base")
@@ -130,4 +137,11 @@ def handler(event):
 
 
 if __name__ == "__main__":
-    runpod.serverless.start({"handler": handler})
+    print("[Qwen-TTS] Starting RunPod serverless loop...", flush=True)
+    try:
+        runpod.serverless.start({"handler": handler})
+    except Exception as e:
+        print(f"[Qwen-TTS] serverless.start crashed: {e}", flush=True)
+        traceback.print_exc()
+        raise
+    print("[Qwen-TTS] serverless.start returned (shouldn't happen)", flush=True)

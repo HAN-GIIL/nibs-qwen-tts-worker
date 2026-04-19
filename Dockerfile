@@ -6,8 +6,9 @@ ENV PYTHONUNBUFFERED=1 \
     HF_HUB_ENABLE_HF_TRANSFER=1 \
     MODEL_PATH=/models/Qwen3-TTS-12Hz-1.7B-Base
 
-# ffmpeg for pydub mp3 encode
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
+# ffmpeg (pydub), libsndfile1 (soundfile), build tools for pip installs
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg libsndfile1 git \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt /app/requirements.txt
