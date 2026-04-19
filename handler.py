@@ -57,12 +57,28 @@ def _load_model():
     print(f"[Qwen-TTS] Loading {MODEL_PATH} (cuda + bf16 + flash-attn3)...", flush=True)
     t0 = time.time()
     from qwen_tts import Qwen3TTSModel
-    _model = Qwen3TTSModel.from_pretrained(
-        MODEL_PATH,
-        device_map="cuda",
-        dtype=torch.bfloat16,
-        attn_implementation="kernels-community/flash-attn3",
-    )
+    # HF Space가 쓰는 kernels-community/flash-attn3는 우리 이미지에서 silently fallback됨
+    # → sdpa (PyTorch 내장 fused)로 명시. H100/4090에서 fast + accurate
+    import traceback as _tb
+    attn = os.environ.get("ATTN_IMPL", "sdpa")
+    print(f"[Qwen-TTS] Trying attn_implementation={attn}", flush=True)
+    try:
+        _model = Qwen3TTSModel.from_pretrained(
+            MODEL_PATH, device_map="cuda", dtype=torch.bfloat16, attn_implementation=attn,
+        )
+    except Exception as e:
+        print(f"[Qwen-TTS] {attn} failed ({e}), falling back to eager", flush=True)
+        _tb.print_exc()
+        _model = Qwen3TTSModel.from_pretrained(
+            MODEL_PATH, device_map="cuda", dtype=torch.bfloat16, attn_implementation="eager",
+        )
+    # 어떤 attention이 실제로 박혔는지 로그
+    try:
+        inner = _model.model
+        attn_used = getattr(inner.config, "_attn_implementation", "unknown")
+        print(f"[Qwen-TTS] Actual _attn_implementation={attn_used}", flush=True)
+    except Exception:
+        pass
     print(f"[Qwen-TTS] Loaded in {time.time()-t0:.1f}s", flush=True)
     return _model
 
