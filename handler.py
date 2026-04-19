@@ -108,14 +108,27 @@ def handler(event):
         return {"error": "ref_text is required"}
 
     try:
-        ref_path = _save_ref_audio(ref_audio_b64)
+        # HF Space 방식 그대로: 파일 → soundfile로 numpy 로드 → (wav, sr) 튜플로 전달
+        import io as _io
+        ref_bytes = base64.b64decode(ref_audio_b64)
+        wav, ref_sr = sf.read(_io.BytesIO(ref_bytes))
+        if wav.ndim > 1:
+            wav = wav.mean(axis=-1)
+        wav = wav.astype(np.float32)
+        # HF Space _normalize_audio와 동일: 이미 float이면 max>1 일 때만 정규화, clip
+        m = float(np.max(np.abs(wav))) if wav.size else 0.0
+        if m > 1.0 + 1e-6:
+            wav = wav / (m + 1e-12)
+        wav = np.clip(wav, -1.0, 1.0)
+        audio_tuple = (wav, int(ref_sr))
+
         model = _load_model()
 
         t0 = time.time()
         wavs, sr = model.generate_voice_clone(
             text=text,
             language=language,
-            ref_audio=ref_path,
+            ref_audio=audio_tuple,
             ref_text=ref_text,
             x_vector_only_mode=False,
             max_new_tokens=2048,
