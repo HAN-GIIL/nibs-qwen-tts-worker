@@ -12,12 +12,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt /app/requirements.txt
-# 먼저 일반 deps 설치 → 그다음 qwen_tts를 --no-deps로 (gradio/fastapi 제외)
-RUN pip install --no-cache-dir -r /app/requirements.txt && \
-    pip install --no-cache-dir --no-deps qwen_tts
+RUN pip install --no-cache-dir -r /app/requirements.txt
 
-# 모델은 빌드 타임에 굽지 않음 (GHA 디스크 한계) → 첫 콜드스타트 때 handler가 자동 다운로드
-# RunPod Network Volume을 마운트해두면 워커 재시작 시에도 캐시 공유됨
+# HF Space에서 가져온 qwen_tts 소스를 PYTHONPATH로 직접 사용
+# PyPI qwen_tts와 내부 구현이 다를 수 있어 HF Space와 동일 코드로 맞춤
+COPY qwen_tts /app/qwen_tts
+ENV PYTHONPATH=/app
 
 COPY handler.py /app/handler.py
 
