@@ -1,16 +1,14 @@
-torch==2.8.0
+# 최소 의존성만 — torch/torchaudio/numpy는 base image에 이미 포함
+# qwen_tts는 gradio/fastapi 등 UI deps 끌어오므로 Dockerfile에서 --no-deps로 설치
 transformers==4.57.3
 accelerate==1.12.0
 einops
 librosa
-torchaudio
 soundfile
-sox
-onnxruntime
-kernels
-numpy<2
+soxr
 scipy
+kernels
 pydub
-runpod>=1.7.0
 huggingface_hub
-qwen_tts
+hf_transfer
+runpod>=1.7.0
