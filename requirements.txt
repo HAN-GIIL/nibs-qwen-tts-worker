@@ -9,6 +9,8 @@ soxr
 scipy
 kernels
 pydub
+sox
+onnxruntime
 huggingface_hub
 hf_transfer
 runpod>=1.7.0
