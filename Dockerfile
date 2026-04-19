@@ -1,5 +1,5 @@
 # RunPod serverless Qwen3-TTS (CUDA 12.4 + bf16 + flash-attn3 via kernels-community)
-FROM runpod/pytorch:1.0.3-cu1290-torch280-ubuntu2204
+FROM pytorch/pytorch:2.8.0-cuda12.6-cudnn9-runtime
 
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1 \
