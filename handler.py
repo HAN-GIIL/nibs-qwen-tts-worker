@@ -239,13 +239,12 @@ def handler(event):
 
         model = _load_model()
 
-        # 텍스트에 꼬리 패딩 추가 — 마지막 음절 잘림 방지. whisper로 본문 끝에서 잘라냄.
+        # 텍스트에 꼬리 마침표만 — 패딩 문장은 voice drift 유발하므로 제거
         import re as _re
         body_chars = _re.sub(r'[^가-힣]', '', text)
         text_padded = text
         if text_padded and text_padded[-1] not in '.!?':
             text_padded += '.'
-        text_padded = text_padded + ' 그럼 다음에 또 봬요.'
 
         # Stochastic 생성이라 "가장" 등이 누락될 때 있음 → 최대 3회 retry, whisper 점수 최고 선택
         best_audio = None
