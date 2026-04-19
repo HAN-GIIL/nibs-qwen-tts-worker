@@ -131,12 +131,19 @@ def handler(event):
         if wav.ndim > 1:
             wav = wav.mean(axis=-1)
         wav = wav.astype(np.float32)
-        # HF Space _normalize_audio와 동일: 이미 float이면 max>1 일 때만 정규화, clip
+        # HF Space _normalize_audio와 동일: float이면 max>1 일 때만 정규화, clip
         m = float(np.max(np.abs(wav))) if wav.size else 0.0
         if m > 1.0 + 1e-6:
             wav = wav / (m + 1e-12)
         wav = np.clip(wav, -1.0, 1.0)
+        # Qwen 모델은 24kHz 기반. ref가 다르면 speech_tokenizer encode 결과 어긋남 → 리샘플
+        TARGET_SR = 24000
+        if ref_sr != TARGET_SR:
+            import librosa as _lr
+            wav = _lr.resample(wav, orig_sr=int(ref_sr), target_sr=TARGET_SR).astype(np.float32)
+            ref_sr = TARGET_SR
         audio_tuple = (wav, int(ref_sr))
+        print(f"[Qwen-TTS] ref wav: shape={wav.shape}, sr={ref_sr}", flush=True)
 
         model = _load_model()
 
