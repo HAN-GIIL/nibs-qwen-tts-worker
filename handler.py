@@ -231,9 +231,7 @@ def handler(event):
             import librosa as _lr
             wav = _lr.resample(wav, orig_sr=int(ref_sr), target_sr=TARGET_SR).astype(np.float32)
             ref_sr = TARGET_SR
-        # ref 끝에 0.5s 묵음 패딩 — decoder 전이 garble이 본문 밖(묵음 위)에서 일어나게
-        silence = np.zeros(int(ref_sr * 0.5), dtype=np.float32)
-        wav = np.concatenate([wav, silence])
+        # ref 묵음 패딩 제거 — speaker embedding 희석 방지 (voice identity 보존 우선)
         audio_tuple = (wav, int(ref_sr))
         print(f"[Qwen-TTS] ref wav: shape={wav.shape}, sr={ref_sr}", flush=True)
 
