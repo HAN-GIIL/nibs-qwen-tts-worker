@@ -271,20 +271,39 @@ def handler(event):
 
         model = _load_model()
 
-        # 긴 텍스트는 청크로 분할. 각 청크 개별 생성 후 concat. Qwen이 ~60~80자 이상에서 drift/early-EOS 약해짐.
+        # Mac qwen_worker.py 튜닝 이식: 청크 60자, 평서문 인토네이션 위해 마침표→콤마 변환,
+        # 꼬리 패딩 " 그럼 다음에 만나요." 추가, TEMP=0.7/TOP_P=0.9/REP_PENALTY=1.0, 청크별 seed 변화
         import re as _re
-        chunks = _chunk_text(text, max_chars=80)
-        print(f"[Qwen-TTS] {len(text)} chars → {len(chunks)} chunks", flush=True)
+        TEMP = 0.7; TOP_P = 0.9; TOP_K = 50; REP_PENALTY = 1.0
+        PADDING = " 그럼 다음에 만나요."
+
+        def normalize_for_model(t: str) -> str:
+            t = t.rstrip()
+            end_punct = ''
+            if t and t[-1] in '.!?':
+                end_punct = '.'
+                t = t[:-1]
+            out = t.replace('.', ',').replace('?', ',').replace('!', ',')
+            out = _re.sub(r',+', ',', out)
+            out = out.rstrip(', ')
+            return out + end_punct
+
+        chunks = _chunk_text(text, max_chars=60)
+        print(f"[Qwen-TTS] {len(text)} chars → {len(chunks)} chunks (max_chars=60)", flush=True)
         t0 = time.time()
         sr = None
         parts = []
         for ci, chunk in enumerate(chunks):
             chunk_body = _re.sub(r'[^가-힣]', '', chunk)
-            chunk_input = chunk if chunk[-1] in '.!?' else chunk + '.'
+            chunk_input = normalize_for_model(chunk) + PADDING
+            torch.manual_seed(42 + ci)
             cw, csr = model.generate_voice_clone(
                 text=chunk_input, language=language,
                 ref_audio=audio_tuple, ref_text=ref_text,
-                x_vector_only_mode=False, max_new_tokens=2048,
+                x_vector_only_mode=False,
+                max_new_tokens=2048, non_streaming_mode=True,
+                do_sample=True, temperature=TEMP, top_p=TOP_P, top_k=TOP_K,
+                repetition_penalty=REP_PENALTY,
             )
             cand = cw[0]
             cand = _trim_tail_by_whisper(cand, csr, chunk_body)
@@ -292,8 +311,8 @@ def handler(event):
             parts.append(cand)
             sr = csr
             print(f"[Qwen-TTS] chunk {ci+1}/{len(chunks)} ({len(chunk)} chars) → {len(cand)/csr:.2f}s", flush=True)
-            # 청크 사이 0.2s 간격
-            parts.append(np.zeros(int(csr * 0.2), dtype=np.float32))
+            # 청크 사이 0.15s 간격 (Mac 설정)
+            parts.append(np.zeros(int(csr * 0.15), dtype=np.float32))
         # 마지막 gap 제거
         if parts and len(parts) > 1:
             parts = parts[:-1]
