@@ -161,6 +161,40 @@ def _trim_tail_by_whisper(audio: np.ndarray, sr: int, body_chars: str, keep_afte
     return audio
 
 
+def _chunk_text(text: str, max_chars: int = 80) -> list[str]:
+    """긴 텍스트를 문장 경계로 분할. 문장 자체가 길면 글자 수 기준으로 추가 분할."""
+    import re
+    sents = re.split(r'(?<=[.!?。])\s*', text)
+    chunks = []
+    cur = ""
+    for s in sents:
+        s = s.strip()
+        if not s:
+            continue
+        if len(s) > max_chars:
+            # 긴 문장을 콤마/공백 기준으로 재분할
+            parts = re.split(r'(?<=[,、])\s*|\s+', s)
+            for p in parts:
+                p = p.strip()
+                if not p:
+                    continue
+                if len(cur) + len(p) + 1 <= max_chars:
+                    cur = f"{cur} {p}".strip() if cur else p
+                else:
+                    if cur:
+                        chunks.append(cur)
+                    cur = p
+        elif len(cur) + len(s) + 1 <= max_chars:
+            cur = f"{cur} {s}".strip() if cur else s
+        else:
+            if cur:
+                chunks.append(cur)
+            cur = s
+    if cur:
+        chunks.append(cur)
+    return chunks if chunks else [text]
+
+
 def _noise_gate_front(audio: np.ndarray, sr: int, duration_s: float = 0.4,
                        threshold: float = 0.035, win_ms: int = 10,
                        attenuation: float = 0.05) -> np.ndarray:
@@ -237,28 +271,35 @@ def handler(event):
 
         model = _load_model()
 
-        # 텍스트에 꼬리 마침표만 — 패딩 문장은 voice drift 유발하므로 제거
+        # 긴 텍스트는 청크로 분할. 각 청크 개별 생성 후 concat. Qwen이 ~60~80자 이상에서 drift/early-EOS 약해짐.
         import re as _re
-        body_chars = _re.sub(r'[^가-힣]', '', text)
-        text_padded = text
-        if text_padded and text_padded[-1] not in '.!?':
-            text_padded += '.'
-
-        # 단일 생성 (retry는 voice drift 유발해서 off). Content 실패시 클라이언트가 재요청.
+        chunks = _chunk_text(text, max_chars=80)
+        print(f"[Qwen-TTS] {len(text)} chars → {len(chunks)} chunks", flush=True)
         t0 = time.time()
-        wavs, sr = model.generate_voice_clone(
-            text=text_padded,
-            language=language,
-            ref_audio=audio_tuple,
-            ref_text=ref_text,
-            x_vector_only_mode=False,
-            max_new_tokens=2048,
-        )
-        audio = wavs[0]
-        audio = _trim_tail_by_whisper(audio, sr, body_chars)
-        audio = _noise_gate_front(audio, sr)
+        sr = None
+        parts = []
+        for ci, chunk in enumerate(chunks):
+            chunk_body = _re.sub(r'[^가-힣]', '', chunk)
+            chunk_input = chunk if chunk[-1] in '.!?' else chunk + '.'
+            cw, csr = model.generate_voice_clone(
+                text=chunk_input, language=language,
+                ref_audio=audio_tuple, ref_text=ref_text,
+                x_vector_only_mode=False, max_new_tokens=2048,
+            )
+            cand = cw[0]
+            cand = _trim_tail_by_whisper(cand, csr, chunk_body)
+            cand = _noise_gate_front(cand, csr)
+            parts.append(cand)
+            sr = csr
+            print(f"[Qwen-TTS] chunk {ci+1}/{len(chunks)} ({len(chunk)} chars) → {len(cand)/csr:.2f}s", flush=True)
+            # 청크 사이 0.2s 간격
+            parts.append(np.zeros(int(csr * 0.2), dtype=np.float32))
+        # 마지막 gap 제거
+        if parts and len(parts) > 1:
+            parts = parts[:-1]
+        audio = np.concatenate(parts) if parts else np.zeros(0, dtype=np.float32)
         gen_s = time.time() - t0
-        duration = len(audio) / sr
+        duration = len(audio) / sr if sr else 0.0
         print(f"[Qwen-TTS] {len(text)} chars → {duration:.2f}s audio in {gen_s:.1f}s", flush=True)
 
         audio_b64 = _encode_mp3(audio, sr)
